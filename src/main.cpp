@@ -1,4 +1,6 @@
 #include <UIPEthernet.h>
+#include <ctype.h>
+#include <string.h>
 
 // MAC address for your Ethernet shield (must be unique on your network)
 byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED};
@@ -10,9 +12,27 @@ EthernetClient client;
 const int relay1Pin = 3; // Relay 1
 const int relay2Pin = 4; // Relay 2
 
+const size_t keyLength = 35;
+
 // State flags
 bool prevPowerLowForRelay2 = false;
 bool pendingRelay1Off = false;
+
+void trim(char *str)
+{
+  char *start = str;
+  while (*start && isspace((unsigned char)*start))
+    start++;
+  if (start != str)
+  {
+    memmove(str, start, strlen(start) + 1);
+  }
+  char *end = str + strlen(str) - 1;
+  while (end >= str && isspace((unsigned char)*end))
+  {
+    *end-- = '\0';
+  }
+}
 
 void setup()
 {
@@ -70,7 +90,8 @@ void loop()
   uint8_t bufferIndex = 0;
   float powerGenerate = 0, powerLoad = 0, powerGrid = 0;
   bool valuesFound = false;
-  String currentKey = "";
+  char currentKey[keyLength];
+  currentKey[0] = '\0';
 
   // Process response line by line
   while (client.connected() || client.available())
@@ -83,11 +104,10 @@ void loop()
       {
         lineBuffer[bufferIndex] = '\0'; // Null-terminate the string
 
-        String line = String(lineBuffer);
-        line.trim(); // Remove leading/trailing whitespace
+        trim(lineBuffer); // Remove leading/trailing whitespace
 
         // Check if we've reached the JSON data
-        if (line.indexOf("{") != -1)
+        if (strchr(lineBuffer, '{') != NULL)
         {
           inJson = true;
         }
@@ -95,46 +115,64 @@ void loop()
         if (inJson)
         {
           // Detect start of object for key
-          int colonPos = line.indexOf(":");
-          if (colonPos != -1 && line.endsWith("{"))
+          char *colon = strchr(lineBuffer, ':');
+          size_t len = strlen(lineBuffer);
+          if (colon != NULL && len > 0 && lineBuffer[len - 1] == '{')
           {
-            String keyPart = line.substring(0, colonPos);
-            keyPart.trim();
-            if (keyPart.startsWith("\"") && keyPart.endsWith("\""))
+            char keyPart[keyLength];
+            size_t keyLen = colon - lineBuffer;
+            if (keyLen >= sizeof(keyPart))
+              keyLen = sizeof(keyPart) - 1;
+            strncpy(keyPart, lineBuffer, keyLen);
+            keyPart[keyLen] = '\0';
+            trim(keyPart);
+
+            size_t keyPartLen = strlen(keyPart);
+            if (keyPartLen >= 2 && keyPart[0] == '"' && keyPart[keyPartLen - 1] == '"')
             {
-              currentKey = keyPart.substring(1, keyPart.length() - 1);
-              Serial.println(currentKey);
+              strncpy(currentKey, keyPart + 1, keyPartLen - 2);
+              currentKey[keyPartLen - 2] = '\0';
             }
           }
-          else if (currentKey != "" && line.startsWith("\"value\" :"))
+          else if (currentKey[0] != '\0' && strncmp(lineBuffer, "\"value\" :", 9) == 0)
           {
             // Extract the value
-            int valueStart = line.indexOf(":") + 1;
-            int valueEnd = line.indexOf(",", valueStart);
-            if (valueEnd == -1)
-              valueEnd = line.length();
-            String valueStr = line.substring(valueStart, valueEnd);
-            valueStr.trim();
-            float value = valueStr.toFloat();
+            char *valueStartPtr = strchr(lineBuffer, ':') + 1;
+            if (valueStartPtr != NULL)
+            {
+              char *valueEnd = strchr(valueStartPtr, ',');
+              if (valueEnd == NULL)
+                valueEnd = lineBuffer + strlen(lineBuffer);
 
-            // Assign to the appropriate variable
-            if (currentKey == "Power_P_Generate")
-            {
-              powerGenerate = value;
-              valuesFound = true;
-            }
-            else if (currentKey == "Power_P_Load")
-            {
-              powerLoad = value;
-              valuesFound = true;
-            }
-            else if (currentKey == "Power_P_Grid")
-            {
-              powerGrid = value;
-              valuesFound = true;
-            }
+              char valueStr[20];
+              size_t valueLen = valueEnd - valueStartPtr;
+              if (valueLen >= sizeof(valueStr))
+                valueLen = sizeof(valueStr) - 1;
+              strncpy(valueStr, valueStartPtr, valueLen);
+              valueStr[valueLen] = '\0';
+              trim(valueStr);
 
-            currentKey = ""; // Reset after extracting value
+              float value = atof(valueStr);
+
+              // Assign to the appropriate variable
+              if (strcmp(currentKey, "Power_P_Generate") == 0)
+              {
+                powerGenerate = value;
+                valuesFound = true;
+              }
+              else if (strcmp(currentKey, "Power_P_Load") == 0)
+              {
+                powerLoad = value;
+                valuesFound = true;
+              }
+              else if (strcmp(currentKey, "Power_P_Grid") == 0)
+              {
+                powerGrid = value;
+                valuesFound = true;
+              }
+
+              currentKey[0] = '\0'; // Reset after extracting value
+            }
           }
         }
 
@@ -199,7 +237,7 @@ void loop()
 
     // Update flags for next cycle
     prevPowerLowForRelay2 = (powerGrid < -1200);
-    delay(5000); // Increased to 15 seconds
+    delay(5000);
   }
   else
   {
