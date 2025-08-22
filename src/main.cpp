@@ -13,6 +13,8 @@ const int relay1Pin = 3; // Relay 1
 const int relay2Pin = 4; // Relay 2
 
 const size_t keyLength = 35;
+const float powerScooter = 600;
+const float powerCar = 1200;
 
 // State flags
 bool prevPowerLowForRelay2 = false;
@@ -207,13 +209,13 @@ void loop()
     pendingRelay1Off = false; // Reset after check
 
     // On logic for relays
-    if (powerGrid < -1200)
+    if (powerGrid < -powerScooter)
     {
       digitalWrite(relay1Pin, HIGH);
       Serial.println("Relay 1 switched ON");
     }
 
-    if (prevPowerLowForRelay2 && powerGrid < -600)
+    if (prevPowerLowForRelay2 && powerGrid < -powerCar)
     {
       digitalWrite(relay2Pin, HIGH);
       Serial.println("Relay 2 switched ON");
@@ -236,7 +238,7 @@ void loop()
     }
 
     // Update flags for next cycle
-    prevPowerLowForRelay2 = (powerGrid < -1200);
+    prevPowerLowForRelay2 = (powerGrid < -powerScooter);
     delay(5000);
   }
   else
