@@ -239,7 +239,7 @@ void loop()
 
     // Update flags for next cycle
     prevPowerLowForRelay2 = (powerGrid < -powerScooter);
-    delay(5000);
+    delay(15000);
   }
   else
   {
