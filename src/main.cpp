@@ -2,23 +2,21 @@
 #include <ctype.h>
 #include <string.h>
 
+// #define DEBUG
+
 // MAC address for your Ethernet shield (must be unique on your network)
-byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED};
+const byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED};
 
 // Ethernet client object
 EthernetClient client;
 
 // Relay pins (connect the IN pins of JQC3F-05VDC-C to these digital pins)
-const int relay1Pin = 3; // Relay 1
-const int relay2Pin = 4; // Relay 2
+const int relayPinScooter = 3; // Relay 1
+const int relayPinCar = 4;     // Relay 2
 
 const size_t keyLength = 35;
 const float powerScooter = 600;
 const float powerCar = 1200;
-
-// State flags
-bool prevPowerLowForRelay2 = false;
-bool pendingRelay1Off = false;
 
 void trim(char *str)
 {
@@ -38,6 +36,7 @@ void trim(char *str)
 
 void setup()
 {
+#ifdef DEBUG
   Serial.begin(9600); // Moved to the first command
 
   // Wait for serial port to connect (important for Nano)
@@ -47,22 +46,27 @@ void setup()
   }
   // Send initial message to confirm USB communication
   Serial.println("Arduino Nano USB Test: Serial communication started!");
+#endif
 
   // Initialize relay pins
-  pinMode(relay1Pin, OUTPUT);
-  pinMode(relay2Pin, OUTPUT);
-  digitalWrite(relay1Pin, LOW); // Start with relay 1 off (active HIGH)
-  digitalWrite(relay2Pin, LOW); // Start with relay 2 off (active HIGH)
+  pinMode(relayPinScooter, OUTPUT);
+  pinMode(relayPinCar, OUTPUT);
+  digitalWrite(relayPinScooter, LOW); // Start with relay 1 off (active HIGH)
+  digitalWrite(relayPinCar, LOW);     // Start with relay 2 off (active HIGH)
 
   // Start Ethernet with DHCP
   if (Ethernet.begin(mac) == 0)
   {
+#ifdef DEBUG
     Serial.println("Failed to configure Ethernet using DHCP");
+#endif
     while (1)
       ; // Halt if DHCP fails
   }
+#ifdef DEBUG
   Serial.print("IP address: ");
   Serial.println(Ethernet.localIP());
+#endif
 
   delay(1000); // Allow network to stabilize
 }
@@ -72,7 +76,9 @@ void loop()
   // Attempt to connect to http://pv-banucu/components/5/0/?print=names
   if (client.connect("pv-banucu", 80))
   {
+#ifdef DEBUG
     Serial.println("Connected to pv-banucu");
+#endif
 
     // Send HTTP GET request
     client.println("GET /components/5/0/?print=names HTTP/1.1");
@@ -82,7 +88,9 @@ void loop()
   }
   else
   {
+#ifdef DEBUG
     Serial.println("Connection failed");
+#endif
     delay(1000); // Wait before retrying
     return;
   }
@@ -90,7 +98,7 @@ void loop()
   bool inJson = false;
   char lineBuffer[56]; // Small buffer to hold each line
   uint8_t bufferIndex = 0;
-  float powerGenerate = 0, powerLoad = 0, powerGrid = 0;
+  float powerGrid = 0;
   bool valuesFound = false;
   char currentKey[keyLength];
   currentKey[0] = '\0';
@@ -136,7 +144,7 @@ void loop()
               currentKey[keyPartLen - 2] = '\0';
             }
           }
-          else if (currentKey[0] != '\0' && strncmp(lineBuffer, "\"value\" :", 9) == 0)
+          else if (currentKey[0] != '\0' && strncmp(lineBuffer, "\"value\"", 7) == 0)
           {
             // Extract the value
             char *valueStartPtr = strchr(lineBuffer, ':') + 1;
@@ -157,17 +165,7 @@ void loop()
               float value = atof(valueStr);
 
               // Assign to the appropriate variable
-              if (strcmp(currentKey, "Power_P_Generate") == 0)
-              {
-                powerGenerate = value;
-                valuesFound = true;
-              }
-              else if (strcmp(currentKey, "Power_P_Load") == 0)
-              {
-                powerLoad = value;
-                valuesFound = true;
-              }
-              else if (strcmp(currentKey, "Power_P_Grid") == 0)
+              if (strcmp(currentKey, "Power_P_Grid") == 0)
               {
                 powerGrid = value;
                 valuesFound = true;
@@ -188,61 +186,88 @@ void loop()
   }
 
   client.stop();
+#ifdef DEBUG
   Serial.println("Disconnected");
+#endif
 
   // Print extracted values if found
   if (valuesFound)
   {
-    Serial.print("Power_P_Generate: ");
-    Serial.println(powerGenerate);
-    Serial.print("Power_P_Load: ");
-    Serial.println(powerLoad);
+#ifdef DEBUG
     Serial.print("Power_P_Grid: ");
     Serial.println(powerGrid);
-
-    // Check for delayed relay 1 off
-    if (pendingRelay1Off && powerGrid > 0)
-    {
-      digitalWrite(relay1Pin, LOW);
-      Serial.println("Delayed Relay 1 switched OFF");
-    }
-    pendingRelay1Off = false; // Reset after check
+#endif
 
     // On logic for relays
-    if (powerGrid < -powerScooter)
+    if (digitalRead(relayPinScooter) == LOW)
     {
-      digitalWrite(relay1Pin, HIGH);
-      Serial.println("Relay 1 switched ON");
+      if (digitalRead(relayPinCar) == LOW)
+      {
+        if (powerGrid < -powerCar)
+        {
+          digitalWrite(relayPinCar, HIGH);
+#ifdef DEBUG
+          Serial.println("Relay car switched ON");
+#endif
+        }
+        else if (powerGrid < -powerScooter)
+        {
+          digitalWrite(relayPinScooter, HIGH);
+#ifdef DEBUG
+          Serial.println("Relay scooter switched ON");
+#endif
+        }
+      }
+      else
+      {
+        if (powerGrid < -powerScooter)
+        {
+          digitalWrite(relayPinScooter, HIGH);
+#ifdef DEBUG
+          Serial.println("Relay scooter switched ON");
+#endif
+        }
+      }
     }
-
-    if (prevPowerLowForRelay2 && powerGrid < -powerCar)
+    else
     {
-      digitalWrite(relay2Pin, HIGH);
-      Serial.println("Relay 2 switched ON");
+      if (digitalRead(relayPinCar) == LOW)
+      {
+        if (powerGrid < -powerCar)
+        {
+          digitalWrite(relayPinCar, HIGH);
+#ifdef DEBUG
+          Serial.println("Relay car switched ON");
+#endif
+        }
+      }
     }
 
     // Off logic for relays
     if (powerGrid > 0)
     {
-      if (digitalRead(relay2Pin) == HIGH)
+      if (digitalRead(relayPinScooter) == HIGH)
       {
-        digitalWrite(relay2Pin, LOW);
-        Serial.println("Relay 2 switched OFF");
-        pendingRelay1Off = true;
+        digitalWrite(relayPinScooter, LOW);
+#ifdef DEBUG
+        Serial.println("Relay scooter switched OFF");
+#endif
       }
-      else
+      else if (digitalRead(relayPinCar) == HIGH)
       {
-        digitalWrite(relay1Pin, LOW);
-        Serial.println("Relay 1 switched OFF");
+        digitalWrite(relayPinCar, LOW);
+#ifdef DEBUG
+        Serial.println("Relay car switched OFF");
+#endif
       }
     }
 
-    // Update flags for next cycle
-    prevPowerLowForRelay2 = (powerGrid < -powerScooter);
     delay(15000);
   }
   else
   {
+#ifdef DEBUG
     Serial.println("No values extracted");
+#endif
   }
 }
